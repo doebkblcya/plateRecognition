@@ -5,8 +5,8 @@ import os
 import json
 
 plate_type = input("请输入车牌类型（7/8）, 7表示普通蓝牌，8表示新能源车牌：")
-temp_json = "03.json"
-temp_jpg = "03.jpg"
+temp_json = "01.json"
+temp_jpg = "01.jpg"
 
 img = cv2.imread(temp_jpg)
 h, w, c = img.shape
@@ -68,7 +68,7 @@ plate = cv2.resize(result, (480, 140))
 
 plt.imshow(plate)
 
-gauss_plate = cv2.GaussianBlur(plate, (3,3), 0)
+gauss_plate = cv2.GaussianBlur(plate, (5,5), 0)
 
 plt.imshow(gauss_plate)
 
@@ -82,11 +82,10 @@ rows = image.shape[0]
 cols = image.shape[1]
 image.shape
 
-gray_mean = np.mean(image)*0.9
+gray_mean = np.mean(image)*0.85
 gray_mean
 
 for row in range(rows):
-    res = 0
     for col in range(cols):
         if image[row][col] > gray_mean:
             image[row][col] = 255
@@ -105,7 +104,7 @@ for row in range(rows):
     hd.append(res)
 
 # 查找车牌区域的上下边界
-mean = sum(hd) / len(hd) * 0.3  # 调整阈值
+mean = sum(hd) / len(hd) * 0.25  # 调整阈值
 region = []
 
 # 从上到下扫描
@@ -156,7 +155,7 @@ mean
 
 
 for i in range(cols):
-    if hdv[i] < mean/2:
+    if hdv[i] < mean*0.4:
         hdv[i] = 0
 
 
@@ -188,13 +187,14 @@ for i in range(cols-1, 0, -1):
 
 imagev = imageh[:,regionx[0]:regionx[1]]
 plt.imshow(imagev,cmap='gray')
-
+plt.show()
 
 # In[34]:
 
 
 image = cv2.resize(imagev, (449, 90))
 plt.imshow(image,cmap='gray')
+plt.show()
 
 
 # In[35]:
@@ -269,7 +269,7 @@ chinese_words_list = get_chinese_words_list()  # 获取中文字符模板列表
 eng_words_list = get_eng_words_list()  # 获取英文字符模板列表
 eng_num_words_list = get_eng_num_words_list()  # 获取数字字符模板列表
 
-# 模板匹配得分
+# 改进模板匹配得分函数
 def template_score(template, image):
     template_img = cv2.imdecode(np.fromfile(template, dtype=np.uint8), 1)
     template_img = cv2.cvtColor(template_img, cv2.COLOR_RGB2GRAY)
@@ -279,57 +279,62 @@ def template_score(template, image):
     height, width = image_.shape
     template_img = cv2.resize(template_img, (width, height))
     
-    # 使用归一化的相关系数匹配方法
-    result = cv2.matchTemplate(image_, template_img, cv2.TM_CCORR_NORMED)
+    # 使用单一的匹配方法，避免多种方法混合导致的干扰
+    result = cv2.matchTemplate(image_, template_img, cv2.TM_CCOEFF_NORMED)
     return result[0][0]
 
-# 模板匹配主函数
-def template_matching(word_images):
+# 改进模板匹配主函数
+def template_matching(word_images, plate_type):
     results = []
     for index, word_image in enumerate(word_images):
-        best_score = []
+        best_score = float('-inf')
+        best_char = None
+        
         if index == 0:  # 第一个字符为汉字
             word_list = chinese_words_list
             start_idx = 34
-            print(f"Matching Chinese character at position {index}")
         elif index == 1:  # 第二个字符为英文字母
             word_list = eng_words_list
             start_idx = 10
-            print(f"Matching English letter at position {index}")
-        else:  # 其余字符可以是字母或数字
+        else:  # 后续字符的匹配策略
             word_list = eng_num_words_list
             start_idx = 0
-            print(f"Matching alphanumeric at position {index}")
 
-        for word_group in word_list:
-            score = [template_score(word, word_image) for word in word_group]
-            best_score.append(max(score))
-            
-        i = best_score.index(max(best_score))
-        char = template[start_idx + i]
-        results.append(char)
-        print(f"Position {index}: matched as '{char}' with score {max(best_score)}")
+        # 对每个模板计算匹配分数
+        for i, word_group in enumerate(word_list):
+            for template_path in word_group:
+                score = template_score(template_path, word_image)
+                if score > best_score:
+                    best_score = score
+                    best_char = template[start_idx + i]
+        
+        # 简单的后处理规则
+        if index > 1:  # 第三位及以后的字符
+            # 处理数字0和字母O、D的混淆
+            if best_char in ['0', 'O', 'D']:
+                black_pixels = np.sum(word_image == 255)
+                total_pixels = word_image.size
+                black_ratio = black_pixels / total_pixels
+                if black_ratio < 0.35:
+                    best_char = '0'
+        
+        results.append(best_char)
+        print(f"Position {index}: matched as '{best_char}' with score {best_score:.3f}")
     
     return results
 
 # 调用函数并输出结果
-result = template_matching(plate)
+result = template_matching(plate, plate_type)
 print("Initial recognition: " + "".join(result))
 
-# 处理字符识别中的 `0` 和 `D` 的误判问题
+# 简化后处理规则
 for i in range(len(result)):
-    if result[i] == '0':
-        res = np.sum(plate[i] == 255)
-        if res > 265:
-            result[i] = 'D'
+    if result[i] in ['0', 'D']:
+        black_pixel_count = np.sum(plate[i] == 255)
+        total_pixels = plate[i].size
+        ratio = black_pixel_count / total_pixels
+        result[i] = '0' if ratio < 0.35 else 'D'
 
-for i in range(len(result)):
-    if result[i] == 'D':
-        res = np.sum(plate[i] == 255)
-        if res < 265:
-            result[i] = '0'
-
-# 输出最终结果
 print("Final plate recognition: " + "".join(result))
 
 

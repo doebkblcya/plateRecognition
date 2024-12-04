@@ -195,6 +195,7 @@ plt.imshow(imagev,cmap='gray')
 
 image = cv2.resize(imagev, (449, 90))
 plt.imshow(image,cmap='gray')
+plt.show()
 
 
 # In[35]:
